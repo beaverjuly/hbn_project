@@ -1,0 +1,15 @@
+name: hbn-ml
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pandas
+  - numpy
+  - scikit-learn
+  - umap-learn
+  - pingouin
+  - scipy
+  - matplotlib
+  - seaborn
+  - requests
+  - jupyterlab
