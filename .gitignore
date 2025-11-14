@@ -1,6 +1,22 @@
+# data & results (required)
 data/
 results/
+
+# secrets / local config
 .env
-*.ipynb_checkpoints/
+*.key
+*.pem
+
+# Jupyter noise
+.ipynb_checkpoints/
+.jupyter/
+
+# OS / editor files
 .DS_Store
+Thumbs.db
 .vscode/
+.idea/
+
+# caches
+__pycache__/
+*.pyc
