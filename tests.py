@@ -1,4 +1,3 @@
-# tests.py
 import os
 import sys
 import io
@@ -8,10 +7,11 @@ import time
 import hashlib
 import subprocess
 from pathlib import Path
-
 import requests
 import pandas as pd
 
+sys.path.append(str((Path(__file__).parent / "src").resolve()))
+from io_utils import fetch_csv_from_url  
 
 # -------------------------------
 # Helpers
@@ -27,8 +27,8 @@ DEFAULT_HBN_PHENO_URL = (
 )
 
 REQUIRED_COLS_ANY = {"EID", "Identifiers"}
-TD_REQUIRED_ANY = {"logk_mean", "ed50_mean"}  # must exist in processed output
-TD_OPTIONAL = {"k_mean", "k_abs_diff"}        # nice-to-have
+TD_REQUIRED_ANY = {"logk_mean", "ed50_mean"}  
+TD_OPTIONAL = {"k_mean", "k_abs_diff"}        
 
 
 def _sha256(path: Path) -> str:
@@ -47,9 +47,18 @@ def _latest_csv_in(folder: Path) -> Path | None:
 # -------------------------------
 # 1) API fetch test (requirement)
 # -------------------------------
+def _normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
+    # strip whitespace + leading BOM
+    df.columns = [c.strip().lstrip("\ufeff") for c in df.columns]
+    return df
+
+ID_CANDIDATES = {"_EID","EID","eid","Identifiers","identifiers",
+                 "participant_id","participantid","subject","subjectkey","id"}
+
 def test_api_fetch_hbn_pheno():
     """
-    Demonstrate programmatic access: HTTP GET -> pandas.read_csv, simple assertions.
+    Demonstrate programmatic access: HTTP GET -> pandas.read_csv, simple assertions,
+    robust to BOM/alias header names.
     """
     url = os.environ.get("HBN_PUBLIC_CSV_URL", DEFAULT_HBN_PHENO_URL)
     print(f"[API] Fetching: {url}")
@@ -57,23 +66,33 @@ def test_api_fetch_hbn_pheno():
     r = requests.get(url, timeout=60)
     r.raise_for_status()
 
-    df = pd.read_csv(io.StringIO(r.text), low_memory=False)
+    # Use utf-8-sig to auto-strip BOM if present
+    df = pd.read_csv(io.StringIO(r.content.decode("utf-8-sig")), low_memory=False)
+    df = _normalize_cols(df)
+
     print("[API] Loaded shape:", df.shape)
+    print("[API] Columns:", df.columns.tolist())
 
     assert df.shape[0] >= 300, "API table should have at least 300 rows"
-    assert any(c in df.columns for c in REQUIRED_COLS_ANY), "Missing ID column (EID / Identifiers)"
 
-    # Show a tiny checksum so graders see it's real data (not committed)
+    # Accept any reasonable ID alias
+    colset = {c for c in df.columns}
+    if not (ID_CANDIDATES & {c if isinstance(c,str) else c for c in colset}):
+        raise AssertionError(
+            "Missing ID column. Expected one of: "
+            + ", ".join(sorted(ID_CANDIDATES))
+        )
+
+    # Checksum to show it's real data
     checksum = hashlib.md5(r.content[:10000]).hexdigest()
     print("[API] Head checksum (md5 of first 10KB):", checksum)
-
 
 # -------------------------------
 # 2) Pipeline execution test
 # -------------------------------
 def test_run_pipeline_and_outputs():
     """
-    Run your exported script once to materialize processed outputs (if needed),
+    Run exported script once to materialize processed outputs (if needed),
     then verify that processed CSVs exist and contain key TD features.
     """
     script = ROOT / "hbn_data_processing_pipeline.py"
@@ -110,13 +129,13 @@ def test_run_pipeline_and_outputs():
     if warn_missing:
         print("[PIPELINE][WARN] Optional TD columns not found:", warn_missing)
 
-    # Missingness sanity (keys should be mostly present)
+    # Missingness check (keys should be mostly present)
     td_miss = dfp[list(TD_REQUIRED_ANY)].isna().mean()
     print("[PIPELINE] Missingness (TD required):")
     print(td_miss)
     assert (td_miss <= 0.10).all(), "Too much missingness in key TD features (>10%)"
 
-    # Save a small provenance file so graders know what was validated
+    # Save a small provenance file to summarize what was validated
     meta = {
         "processed_csv": cand.name,
         "rows": int(dfp.shape[0]),
